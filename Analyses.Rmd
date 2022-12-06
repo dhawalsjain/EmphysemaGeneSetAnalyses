@@ -1,0 +1,955 @@
+---
+title: "Emphysema gene set analyses in single cell datasets"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+author: "Dhawal Jain, Bayer"
+output:
+  html_document:
+    code_folding: hide
+    toc: true
+    df_print: paged
+    highlights: pygments
+    self_contained: true
+    number_sections: yes
+    theme: sandstone
+    toc_float:
+      collapsed: yes
+    smooth_scroll: yes
+  word_document:
+  toc: yes
+---
+  
+  
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(
+  echo=T, # shows code
+  cache=F,message = F, warning = F
+)
+set.seed(31)
+
+```
+
+
+
+```{r, Functions,message = F, warning = F}
+library(Seurat)
+library(ggplot2)
+library(plotly)
+library(reshape)
+library(dplyr)
+library(knitr)
+require(data.table)
+library(DT)
+library(gprofiler2)
+library(RColorBrewer)
+library(ggpubr)
+library(htmltools)
+
+deg <- read.csv("LTRC_DE_dtabsGene_10_26_2022.csv")  
+deg$logFC <- deg$logFC*(-100) # multiply logFC by -100
+
+
+```
+
+```{r,message = F, warning = F,echo=F}
+library(gage)
+library(pathview)
+library(gageData)
+library(org.Hs.eg.db)
+data("kegg.sets.hs")
+data("sigmet.idx.hs")
+kegg.sets.hs = kegg.sets.hs[sigmet.idx.hs]
+#names(kegg.sets.hs)
+kegg_human = kegg.gsets(species = 'hsa',id.type = 'kegg')
+kegg.sets.hs = kegg_human$kg.sets[unique(c(kegg_human$sigmet.idx,kegg_human$sig.idx,kegg_human$met.idx,kegg_human$dise.idx))]
+#names(kegg.sets.hs)
+```
+
+![](PDDLogo.png)    
+
+<p style="font-family: times, roman; font-size:11p;color:#f03b20"> Strategic collaboration - Speciality lung diseases </p>
+  <p style="font-family: times, roman; font-size:8p;color:#f03b20"> The report contains proprietary data - yet t obe published.</p>
+  <p> </p>
+  <p> </p>
+  <p> </p>
+  <p style="font-size:200%;color:#8856a7;font-face:bold;"> Project: Emphysema gene set analyses </p>
+  <p> </p>
+  <p> </p>
+  <p> </p>
+  
+
+# Aims
+- Assess set enrichments for differentially expressed genes (DEG) between emphysema and control
+- Cell type expression specificity of DEG in Kaminski and Habermann single cell datasets
+- Pathway scores across cell types
+- Changes in pathways across cell types between COPD and Control subjects
+
+
+# Data exploration
+
+- Here, I started with the differentially expressed gene (DEG) set Robin Lu provided.
+- Refer file <b>LTRC_DE_dtabsGene_10_26_2022.csv</b>
+- Differential expression (DE) of the genes were assessed for emphysema phenotypic measures
+- Limma/Voom package was used for data normalization and subsequent computation of the test statistics.
+- In the section below, I display DEG with FDR cutoff of 25%
+- You can hover-over the points (representing individual genes) to learn about the gene name, logFC and FDR stat.
+
+
+```{r, fig.height=6,fig.width=8,warning=F,message=F}
+local({
+  P <- ggplot(deg[deg$adj.P.Val<0.25,],aes(x=logFC,y=-log10(adj.P.Val),col=logFC,
+                                           #size=-log10(adj.P.Val),
+                                           text=paste0('Gene: ',hgnc_symbol,'<br>',
+                                                       'FDR: ', formatC(adj.P.Val,digits = 2,format = 'e'),'<br>',
+                                                       'Log2FC: ', round(logFC,2),'<br>',
+                                                       'Biotype: ', gene_biotype,'<br>')
+  ))+geom_point()+
+    geom_hline(yintercept =1.3,col='#31a354',linetype='dashed' )+
+    #geom_vline(xintercept =c(-1,1),col='#31a354',linetype='dashed' )+
+    scale_color_gradient2(limits=range(deg$logFC,na.rm = T),
+                          low = '#542788',mid = '#f7f7f7',high = '#b35806',
+                          space = 'Lab')+
+    theme_bw() + xlab("logFC") +ylab("-log10(FDR)")+
+    ggtitle(label = 'Differentially expressed genes')+
+    theme(axis.text.x = element_text(color='black',angle = 0,hjust = 0.5),
+          legend.position = 'right',
+          plot.title = element_text(size=15,hjust = 0.5,colour = 'black'))
+  
+  P <- P + labs(color="")
+  P <- P %>% ggplotly(tooltip = 'text')
+  P
+})
+
+
+```
+
+
+# Set enrichments {.tabset .tabset-fade}
+
+## Using whole transcriptome as background  {.tabset .tabset-fade}
+
+- Differential gene expression list was analyzed using g:Profiler(1). The online API-based tool was employed to assess enrichment of set of genes across 11 different classes.
+- Briefly, the genes were considered as differentially expressed when the corresponding false discovery rates were less than 10%. The genes were further categorized into up and downregulated in the emphysema endpoint and used separately for the set enrichment analysis (exclude_iea=T,domain_scope=‘annotated’,user_threshold=0.05, correction_method=‘g_SCS’).
+- The results were visualized using the gostplot function from gProfiler package.
+
+### Overexpressed genes
+
+```{r, fig.height=8,fig.width=10,warning=F,message=F}
+local({
+  dup <- deg[deg$adj.P.Val<0.1 & deg$logFC>0, ]
+  res <- gprofiler2::gost(query = list('Over-expressed genes\n(FDR < 10%)'=dup$hgnc_symbol),
+                          organism = 'hsapiens',
+                          ordered_query = F,exclude_iea = T,
+                          domain_scope = 'annotated',significant = F,
+                          user_threshold = 0.05,correction_method = 'g_SCS')
+  #table(res$result[res$result$significant==T,]$source)
+  hterms = res$result[res$result$significant==T & res$result$source%in%c('KEGG','WP','REAC'),]$term_id
+  p = gostplot(gostres = res,capped = F,interactive = F)
+  p = publish_gostplot(p,highlight_terms = hterms)
+  p
+  
+  res[[1]] %>%
+    dplyr::select(c("source","term_id" ,"term_name","term_size", "intersection_size","p_value")) %>%
+    dplyr::filter(intersection_size>1 & p_value<0.05) %>%
+    dplyr::arrange(p_value) %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("Enrichments_overExpressedFDR_10")),
+                                            list(extend ='excel', filename = paste0("Enrichments_OverExpressedFDR_10"))), 
+                             scrollX = TRUE,scrollCollapse = TRUE)) %>% 
+    formatSignif(columns = c('p_value'),digits = 2)
+  
+  
+})
+
+```
+
+### Underexpressed genes
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  ddn <- deg[deg$adj.P.Val<0.1 & deg$logFC<0, ]
+  resa <- gprofiler2::gost(query = list('Under-expressed genes\n(FDR <10%)' = ddn$hgnc_symbol),
+                           organism = 'hsapiens',
+                           ordered_query = F,exclude_iea = T,
+                           domain_scope = 'annotated',significant = F,
+                           user_threshold = 0.05,correction_method = 'g_SCS')
+  #table(resa$result[resa$result$significant==T,]$source)
+  htermsa = resa$result[resa$result$significant==T & resa$result$source%in%c('KEGG','WP','REAC'),]$term_id
+  q = gostplot(gostres = resa,capped = F,interactive = F)
+  q = publish_gostplot(q,highlight_terms = htermsa)
+  q 
+  
+  resa[[1]] %>%
+    dplyr::select(c("source","term_id" ,"term_name","term_size", "intersection_size","p_value")) %>%
+    dplyr::filter(intersection_size>1 & p_value<0.05) %>%
+    dplyr::arrange(p_value) %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("Enrichments_UnderExpressedFDR_10")),
+                                            list(extend ='excel', filename = paste0("Enrichments_UnderExpressedFDR_10"))), 
+                             scrollX = TRUE,scrollCollapse = TRUE)) %>% 
+    formatSignif(columns = c('p_value'),digits = 2)
+  
+})
+```
+
+
+## Using custom background  {.tabset .tabset-fade}
+
+- Differential gene expression list was analyzed using g:Profiler(1). The online API-based tool was employed to assess enrichment of set of genes across 11 different classes.
+- Briefly, the genes were considered as differentially expressed when the corresponding false discovery rates were less than 10%. The genes were further categorized into up and downregulated in the emphysema endpoint and used separately for the set enrichment analysis (exclude_iea=T,domain_scope=‘annotated’,user_threshold=0.05, correction_method=‘g_SCS’).
+- To score biologically meaningful enrichment, we use custom set of genes as a background -instead of using the entire coding transcriptome. The background gene was defined by thresholding measured genes for an average expression of 2RPKM in the cohort.
+- A total of 15888/17353 (91.5%) genes defined the custom background set.
+- The results were visualized using the gostplot function from gProfiler package.
+
+### Overexpressed genes
+
+```{r, fig.height=8,fig.width=10,warning=F,message=F}
+local({
+  cust_glist = unique(deg[deg$AveExpr>0,]$hgnc_symbol)
+  
+  dup <- deg[deg$adj.P.Val<0.1 & deg$logFC>0, ]
+  res <- gprofiler2::gost(query = list('Over-expressed genes\n(FDR < 10%)'=dup$hgnc_symbol),
+                          organism = 'hsapiens',
+                          custom_bg = cust_glist,
+                          ordered_query = F,exclude_iea = T,
+                          domain_scope = 'annotated',significant = F,
+                          user_threshold = 0.05,correction_method = 'g_SCS')
+  #table(res$result[res$result$significant==T,]$source)
+  hterms = res$result[res$result$significant==T & res$result$source%in%c('KEGG','WP','REAC'),]$term_id
+  p = gostplot(gostres = res,capped = F,interactive = F)
+  p = publish_gostplot(p,highlight_terms = hterms)
+  p
+  
+  res[[1]] %>%
+    dplyr::select(c("source","term_id" ,"term_name","term_size", "intersection_size","p_value")) %>%
+    dplyr::filter(intersection_size>1 & p_value<0.05) %>%
+    dplyr::arrange(p_value) %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("Enrichments_overExpressedFDR_10")),
+                                            list(extend ='excel', filename = paste0("Enrichments_OverExpressedFDR_10"))), 
+                             scrollX = TRUE,scrollCollapse = TRUE)) %>% 
+    formatSignif(columns = c('p_value'),digits = 2)
+  
+  
+})
+
+```
+
+### Underexpressed genes
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  ddn <- deg[deg$adj.P.Val<0.1 & deg$logFC<0, ]
+  cust_glist = unique(deg[deg$AveExpr>0,]$hgnc_symbol)
+  
+  resa <- gprofiler2::gost(query = list('Under-expressed genes\n(FDR <10%)' = ddn$hgnc_symbol),
+                           organism = 'hsapiens',custom_bg = cust_glist,
+                           ordered_query = F,exclude_iea = T,
+                           domain_scope = 'annotated',significant = F,
+                           user_threshold = 0.05,correction_method = 'g_SCS')
+  #table(resa$result[resa$result$significant==T,]$source)
+  htermsa = resa$result[resa$result$significant==T & resa$result$source%in%c('KEGG','WP','REAC'),]$term_id
+  q = gostplot(gostres = resa,capped = F,interactive = F)
+  q = publish_gostplot(q,highlight_terms = htermsa)
+  q 
+  
+  resa[[1]] %>%
+    dplyr::select(c("source","term_id" ,"term_name","term_size", "intersection_size","p_value")) %>%
+    dplyr::filter(intersection_size>1 & p_value<0.05) %>%
+    dplyr::arrange(p_value) %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("Enrichments_UnderExpressedFDR_10")),
+                                            list(extend ='excel', filename = paste0("Enrichments_UnderExpressedFDR_10"))), 
+                             scrollX = TRUE,scrollCollapse = TRUE)) %>% 
+    formatSignif(columns = c('p_value'),digits = 2)
+  
+})
+```
+
+
+<b>Observations</b><br>
+  - Mostly mitochondrial pathways seem to be enriched for under-expressed genes.
+- For over-expressed genes, the FoxO and TGF-beta signalling pathways seem to be enriched - suggesting that these pathways are upregulated.
+
+
+## Against all measured genes  {.tabset .tabset-fade}
+
+- Differential gene expression list was analyzed using g:Profiler(1). The online API-based tool was employed to assess enrichment of set of genes across 11 different classes.
+- Briefly, the genes were considered as differentially expressed when the corresponding false discovery rates were less than 10%. The genes were further categorized into up and downregulated in the emphysema endpoint and used separately for the set enrichment analysis (exclude_iea=T,domain_scope=‘annotated’,user_threshold=0.05, correction_method=‘g_SCS’).
+- To score biologically meaningful enrichment, we use custom set of genes as a background -instead of using the entire coding transcriptome. The background gene set was defined by using all measured genes with non-zero signal in the cohort.
+- A total of 17353 genes defined the custom background set.
+- The results were visualized using the gostplot function from gProfiler package.
+
+### Overexpressed genes
+
+```{r, fig.height=8,fig.width=10,warning=F,message=F}
+local({
+  cust_glist = unique(deg$hgnc_symbol)
+  dup <- deg[deg$adj.P.Val<0.1 & deg$logFC>0, ]
+  res <- gprofiler2::gost(query = list('Over-expressed genes\n(FDR < 10%)'=dup$hgnc_symbol),
+                          organism = 'hsapiens',
+                          custom_bg = cust_glist,
+                          ordered_query = F,exclude_iea = T,
+                          domain_scope = 'annotated',significant = F,
+                          user_threshold = 0.05,correction_method = 'g_SCS')
+  #table(res$result[res$result$significant==T,]$source)
+  hterms = res$result[res$result$significant==T & res$result$source%in%c('KEGG','WP','REAC'),]$term_id
+  p = gostplot(gostres = res,capped = F,interactive = F)
+  p = publish_gostplot(p,highlight_terms = hterms)
+  p
+  res[[1]] %>%
+    dplyr::select(c("source","term_id" ,"term_name","term_size", "intersection_size","p_value")) %>%
+    dplyr::filter(intersection_size>1 & p_value<0.05) %>%
+    dplyr::arrange(p_value) %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("Enrichments_overExpressedFDR_10")),
+                                            list(extend ='excel', filename = paste0("Enrichments_OverExpressedFDR_10"))), 
+                             scrollX = TRUE,scrollCollapse = TRUE)) %>% 
+    formatSignif(columns = c('p_value'),digits = 2)
+})
+
+
+```
+
+### Underexpressed genes
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  ddn <- deg[deg$adj.P.Val<0.1 & deg$logFC<0, ]
+  cust_glist = unique(deg$hgnc_symbol)  ## all genes in Robin's data
+  resa <- gprofiler2::gost(query = list('Under-expressed genes\n(FDR <10%)' = ddn$hgnc_symbol),
+                           organism = 'hsapiens',custom_bg = cust_glist,
+                           ordered_query = F,exclude_iea = T,
+                           domain_scope = 'annotated',significant = F,
+                           user_threshold = 0.05,correction_method = 'g_SCS')
+  htermsa = resa$result[resa$result$significant==T & resa$result$source%in%c('KEGG','WP','REAC'),]$term_id
+  q = gostplot(gostres = resa,capped = F,interactive = F)
+  q = publish_gostplot(q,highlight_terms = htermsa)
+  q 
+  
+  resa[[1]] %>%
+    dplyr::select(c("source","term_id" ,"term_name","term_size", "intersection_size","p_value")) %>%
+    dplyr::filter(intersection_size>1 & p_value<0.05) %>%
+    dplyr::arrange(p_value) %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("Enrichments_UnderExpressedFDR_10")),
+                                            list(extend ='excel', filename = paste0("Enrichments_UnderExpressedFDR_10"))), 
+                             scrollX = TRUE,scrollCollapse = TRUE)) %>% 
+    formatSignif(columns = c('p_value'),digits = 2)
+})
+
+```
+
+
+<b>Observations</b><br>
+  - Mostly mitochondrial pathways seem to be enriched for under-expressed genes.
+- For overr-expressed genes, the FoxO and TGF-beta signalling pathways seem to be enriched - suggesting that these pathways are upregulated.
+
+
+
+
+# Single cell expression dataset {.tabset .tabset-fade}
+
+- We use Kaminski IPF dataset(2) for querying the DEGs at cell type resolution.
+- The dataset consists of 312,928 single cells from 78 human samples (28 Control, 18 End-stage COPD, 32 IPF). The healthy control samples in this cohort represents allograft rejected donors.
+- In current section, we summarize the single cell data
+
+```{r, fig.height=6,fig.width=8,warning=F,message=F}
+so <- readRDS("/home/rstudio/data/SCS/Kaminski_IPF2020/Kaminski_IPF_2020.rds")
+so@active.ident <- factor(so$cell_type)
+names(so@active.ident) <- rownames(so@meta.data)
+so$Disease <- so$Disease_Identity
+
+```
+
+## Data summary
+
+```{r, fig.height=6,fig.width=8,warning=F,message=F}
+DimPlot(so, reduction = "umap", label = TRUE,repel=T, pt.size = 0.5,raster = T) + NoLegend()
+
+```
+
+## Data summarized by disease group
+
+```{r, fig.height=6,fig.width=12,warning=F,message=F}
+DimPlot(so, reduction = "umap", label = TRUE,repel=T, pt.size = 0.5,split.by = 'Disease',raster = T) + NoLegend()
+
+```
+
+## Summary of relevant subset of data
+- We ommited the single cells derived from 32 IPF subjects. This results in overall 165,759 single cells in the data.
+
+```{r, fig.height=6,fig.width=8,warning=F,message=F}
+meta <- readRDS("Kaminski_AdelPathwayScores_metadata.rds")
+names(meta) <- gsub("1$","",names(meta))
+so@meta.data = meta
+rm(meta)
+so <- subset(x = so, subset = Disease != "IPF")
+DimPlot(so, reduction = "umap", label = TRUE,repel=T, pt.size = 0.5,raster = T) + NoLegend()
+```
+
+## Cell counts
+
+```{r, fig.height=6,fig.width=8,warning=F,message=F}
+as.data.frame.matrix((table(so$cell_type,so$Disease)))
+
+```
+
+
+# Specificities of the DE genes {.tabset .tabset-fade}
+
+- To calculate gene expression specificity for a cell type, we compute odds ratio between the cells that express the genes and not for the given cell type ad the remainder of the cells. The gene is considered a expressed if it has a non-zero normalized expression.
+- The expression specificities were calculated for 124 upregulated and 76 down-regulated genes (FDR<5%).
+
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+
+mycalcfun1 <- function(resa){
+  gc()
+  e <- FetchData(so,vars = unique(resa$hgnc_symbol))
+  cntr_thresh <- 0
+  #plot(density(unlist(e),na.rm=T))
+  dat <- so@active.ident
+  dat <- data.frame(cell=names(dat),cluster=dat)
+  tsnepl <- so@reductions$umap@cell.embeddings %>% as.data.frame
+  tsnepl$cell <- rownames(tsnepl)
+  tsnepl <- merge(tsnepl,dat,by="cell")
+  e <- e %>% mutate(cell = rownames(e))
+  dat <- merge(dat,e,by="cell",all.x=T)
+  dat$cell <- NULL
+  dat[is.na(dat)] <- 0
+  dat <- as.data.table(dat)
+  ## select expressed proteins in single cells
+  dat <- dat[, lapply(.SD, function(x) sum(x>cntr_thresh) ), by=list(cluster)] %>%as.data.frame 
+  rownames(dat) <- dat$cluster
+  dat$cluster <- NULL
+  dat <- dat %>% t %>% as.data.frame
+  tsnepl <- merge(tsnepl,e,by="cell")
+  
+  y <- unname(table(tsnepl$cluster)[names(dat)]) 
+  pvals <- t(apply(dat,1,function(x){
+    out <- c()
+    for(i in 1:length(x)){
+      xx <- matrix(c( x[i], y[i]-x[i],  sum(x),sum(y)-sum(x)), nrow = 2,byrow = F)
+      out <- c(out, fisher.test(xx,alternative = "greater")$p.val)
+    }
+    out
+  }))
+  
+  pvals <- as.data.frame(pvals)
+  padj <- matrix(p.adjust(unlist(pvals),method = "fdr"),nrow=nrow(pvals),byrow = F) %>% as.data.frame
+  names(padj) <- names(pvals)
+  rownames(padj) <- rownames(pvals)
+  names(padj) <- names(pvals) <- paste0(names(dat))
+  
+  list(pvals=pvals,padj=padj)
+}
+
+res <- deg
+res$entrez = mapIds(org.Hs.eg.db,keys = res$hgnc_symbol,column = 'ENTREZID',keytype = 'SYMBOL',multiVals = 'first')
+res <- res[!is.na(res$entrez),]
+res$entrez <- as.character(res$entrez)
+#resa <- res[res$entrez %in%   kegg.sets.hs[[grep('hsa04068',names(kegg.sets.hs))]], ]
+
+resa <- res[res$adj.P.Val<0.05 & res$logFC>0, ]
+resb <- res[res$adj.P.Val<0.05 & res$logFC < 0, ]
+qqa <- mycalcfun1(resa)
+qqb <- mycalcfun1(resb)
+
+resa <- res[res$adj.P.Val<0.1 & res$logFC>0, ]
+resb <- res[res$adj.P.Val<0.1 & res$logFC < 0, ]
+qqc <- mycalcfun1(resa)
+qqd <- mycalcfun1(resb)
+
+rm(resa,resb)
+
+```
+
+
+## Specificities of upregulated genes (FDR5%) {.tabset .tabset-fade}
+- Total 118 genes <br>
+  <b>Note:</b>
+  - The attached table displays FDR values on -log10 scale.
+- Furthermore, the -log10FDR values are capped at 100.
+
+### Heatmap
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(qqa[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  ht = ComplexHeatmap::Heatmap(t(m),
+                               #column_order = names(n),
+                               name = 'enrichment\n-log10(FDR)',
+                               row_names_gp = grid::gpar(fontsize = 9),
+                               column_names_gp = grid::gpar(fontsize = 9),
+                               column_title_gp =  grid::gpar(fontsize = 9),
+                               col=circlize::colorRamp2(range(m,na.rm=T),
+                                                        c("#ffffcc", "#800026")))
+  ComplexHeatmap::draw(ht, heatmap_legend_side = "bottom")
+})
+
+```
+
+### Table
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(qqa[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  m <- as.data.frame(m)
+  m$gene <- rownames(m)
+  m <- m[,c(ncol(m),1:(ncol(m)-1) )]
+  m %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("SpcificityEnrichments_FDR_5")),list(extend ='excel', filename = paste0("SpcificityEnrichments_FDR_5"))), scrollX = TRUE,scrollCollapse = TRUE))
+  
+})
+
+```
+
+
+## Specificities of downregulated genes (FDR5%) {.tabset .tabset-fade}
+- Total 99 genes 
+<b>Note:</b><br>
+  - The attached table displays FDR values on -log10 scale.
+- Furthermore, the -log10FDR values are capped at 100.
+
+### Heatmap
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(qqb[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  ht = ComplexHeatmap::Heatmap(t(m),
+                               #column_order = names(n),
+                               name = 'enrichment\n-log10(FDR)',
+                               row_names_gp = grid::gpar(fontsize = 9),
+                               column_names_gp = grid::gpar(fontsize = 9),
+                               column_title_gp =  grid::gpar(fontsize = 9),
+                               col=circlize::colorRamp2(range(m,na.rm=T),
+                                                        c("#ffffcc", "#800026")))
+  ComplexHeatmap::draw(ht, heatmap_legend_side = "bottom")
+})
+```
+
+### Table
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(qqb[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  m <- as.data.frame(m)
+  m$gene <- rownames(m)
+  m <- m[,c(ncol(m),1:(ncol(m)-1) )]
+  m %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("SpcificityEnrichments_FDR_5")),list(extend ='excel', filename = paste0("SpcificityEnrichments_FDR_5"))), scrollX = TRUE,scrollCollapse = TRUE))
+  
+  
+})
+
+```
+
+
+## Specificities at FDR 10% {.tabset .tabset-fade}
+
+### Upregulated genes
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(qqc[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  m <- as.data.frame(m)
+  m$gene <- rownames(m)
+  m <- m[,c(ncol(m),1:(ncol(m)-1) )]
+  m %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("SpcificityEnrichments_FDR_10")),list(extend ='excel', filename = paste0("SpcificityEnrichments_FDR_10"))), scrollX = TRUE,scrollCollapse = TRUE))
+  
+})
+
+```
+
+### Downregulated genes
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(qqd[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  m <- as.data.frame(m)
+  m$gene <- rownames(m)
+  m <- m[,c(ncol(m),1:(ncol(m)-1) )]
+  m %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("SpcificityEnrichments_FDR_10")),list(extend ='excel', filename = paste0("SpcificityEnrichments_FDR_10"))), scrollX = TRUE,scrollCollapse = TRUE))
+  
+})
+```
+
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+rm(resa,resb,qqa,qqb,qqc,qqd)
+```
+
+
+<b>Observations </b><br>
+  - It seems that most of the upregulated genes (<5%FDR) are enriched in macrophages. There is a small set of genes further seem to be enriched in epithelial population followed by third group of genes showing specific enrichment in vascular endothelial cells.
+- The downregulated genes (FDR <5%) seem to be enriched for macrophages and ciliated cells.
+- These cell types might play an important role in overall disease manifestation and can be further explored.
+
+
+# Projecting the summary statistics on pathways {.tabset .tabset-fade}
+
+- Robin performed pathway enrichment analyses using GSEA.
+- In total 46 pathways were observed to be enriched or depleted in our data (FDR < 0.15).
+- Choline metabolism pathway was not fully mapped to KEGG from the above 46 and hence is omitted.
+<br>
+<br>
+  - There are 3 pathways plots provided per selected KEGG pathway.
+* Log fold change associated with the genes are color-coded from blue to red.
+* False discovery rate (FDR, on -log10 scale) associated with the genes are color-coded from yellow to violet.
+* Log fold change associated with the genes with FDR <10% are color-coded from blue to red.
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+mypaths <- readRDS("/home/rstudio/external/AdelPeter/AdditionalPathways.rds")
+mypaths$k1 =   paste0("/home/rstudio/external/AdelPeter/",mypaths$keggid,".l2fc.png")
+mypaths$k2 =   paste0("/home/rstudio/external/AdelPeter/",mypaths$keggid,".fdr.png")
+mypaths$k3 =   paste0("/home/rstudio/external/AdelPeter/",mypaths$keggid,".l2fc_statdiff.png")
+mypaths$kegg_makenames <- gsub("1$","",mypaths$kegg_makenames)
+mypaths <- mypaths[-36,] # Choline metabolism pathway not available.
+mypaths$label <- gsub('hsa\\d* ','',mypaths$kegg)
+
+```
+
+
+```{r,results='asis',echo=F,message=F}
+for(i in 1:nrow(mypaths)){
+  cat("##",mypaths$label[i],"\n")
+  print("Projecting logFC on the pathway\n")
+  print(paste0("![](",mypaths$k1[i],")"))
+  print("Projecting FDR on the pathway\n")
+  print(paste0("![](",mypaths$k2[i],")"))
+  print("Projecting logFC, with FDR <10%, on the pathway\n")
+  print(paste0("![](",mypaths$k3[i],")"))
+  cat("\n\n")
+}
+
+```
+
+
+# Projecting pathway scores on Kaminski data {.tabset .tabset-fade}
+
+- A composite gene expression signature for the pathway members was summarized using AddModuleScore function from Seurat package (5).
+- Briefly, the function calculates normalized average expression for a set of genes belonging to a given pathway subtracted by an aggregate expression of control genes. All genes are binned based on their average expression and control genes are selected randomly from each bin to calculate the background aggregate expression.
+- We employed the composite gene expression signature approach to calculate pathway activity score for 46 KEGG pathways across every single cell in the data.
+- The pathway activity scores were qualitatively visualized on the 2D embeddings of the single cell data.
+- Next, we further quantitatively compared the pathway activity scores between the control/healthy and end-stage-COPD stage for each cell type separately using t-statstics.
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+myplotfun1 <- function(i=1,mypaths,so){
+  P = FeaturePlot(so,features = mypaths$kegg_makenames[i], 
+                  label = T, repel = T,reduction = 'umap')+
+    scale_colour_gradientn(colours = rev(brewer.pal(n = 11, name = "RdBu")))+
+    ggtitle(gsub('hsa\\d*','',mypaths$kegg[i]))
+  return(P)
+}
+
+myplotfun2 <- function(i=1,mypaths,so,plt=1){
+  pl <- so@meta.data
+  pl <- pl[!pl$cell_type %in% c('Aberrant_Basaloid','Ionocyte'),]
+  mx = max(pl[,mypaths$kegg_makenames[i]])
+  titl = gsub('hsa\\d*','',mypaths$kegg[i])
+  subtitl = paste0("(",
+                   sum(res[res$entrez%in%unique(kegg.sets.hs[[mypaths$kegg[i] ]]),]$hgnc_symbol%in%rownames(so)),
+                   "/",
+                   length(unique(kegg.sets.hs[[mypaths$kegg[i] ]] )),
+                   " pathway genes expressed in scRNA-seq)"
+  )
+  
+  if(plt==1){
+    P=ggplot(pl,aes(x=cell_type,y=pl[,mypaths$kegg_makenames[i]],fill=Disease))+
+      geom_boxplot(outlier.shape = NA)+
+      theme_bw()+
+      stat_compare_means(label = "p.signif", method = "t.test",
+                         hide.ns = T,label.y=seq(0.9*mx,1.5*mx,length.out=37)) + 
+      ggtitle(label = titl,subtitle=subtitl)+
+      ylab("")+xlab("Avg. normalized expression")+
+      geom_hline(yintercept=median(pl[,mypaths$kegg_makenames[i]]),col='red')+
+      scale_fill_manual(values=c('Control'='#91cf60','COPD'='#fc8d59'))+
+      theme(axis.text=element_text(color='black'),
+            axis.text.x=element_text(angle=90,hjust=1))
+    return(P)
+  }else if(plt==2){
+    Q=ggplot(pl,aes(x=cell_type,y=pl[,mypaths$kegg_makenames[i]],fill=Disease))+
+      geom_boxplot(outlier.shape = NA)+
+      theme_bw()+
+      ggtitle(label = titl,subtitle=subtitl)+
+      ylab("")+xlab("Avg. normalized expression")+
+      geom_hline(yintercept=median(pl[,mypaths$kegg_makenames[i]]),col='red')+
+      scale_fill_manual(values=c('Control'='#91cf60','COPD'='#fc8d59'))+
+      theme(axis.text=element_text(color='black'),
+            axis.text.x=element_text(angle=90,hjust=1))
+    return(Q)
+  }else{
+    R=local({
+      x <- pl[,c('cell_type','Disease',mypaths$kegg_makenames[i])] %>% 
+        mutate(val = pl[,mypaths$kegg_makenames[i]]) %>% 
+        dplyr::select(cell_type,Disease,val) %>% 
+        group_by(cell_type) %>% 
+        do(broom::tidy(t.test(val ~ Disease, data = .))) %>%
+        as.data.frame()
+      y <- pl[,c('cell_type','Disease',mypaths$kegg_makenames[i])] %>% 
+        mutate(val = pl[,mypaths$kegg_makenames[i]]) %>% 
+        dplyr::select(cell_type,Disease,val) %>% 
+        group_by(cell_type,Disease) %>%
+        summarise(average=mean(val),
+                  median = median(val),
+                  standard_deviation = sd(val), 
+                  std_error_of_mean= sd(val)/sqrt(n()))%>%
+        as.data.frame()
+      y <- merge(y,x[-c(2:4)],by='cell_type')
+      y <- as.data.frame(y)
+      y[,c(3:7,9:11)] <- round(y[,c(3:7,9:11)],4)
+      y
+    }) 
+    return(R)
+  }
+}
+
+```
+
+- I compute an aggregate mean score for these genes in Kaminski data
+- Using the AddModuleScore function, I subtract the background score calculated by selecting the genes with similar levels of expression as the input list. 
+
+
+```{r,results='asis',echo=F,message=F,fig.height=6,fig.width=8,warning=F}
+for(i in 1:nrow(mypaths)){
+  cat("##",mypaths$label[i],"\n")
+  print(myplotfun1(i=i,mypaths,so))
+  cat("\n\n")
+}
+```
+
+
+# Pathway score differences between COPD and Control {.tabset .tabset-fade}
+
+## Method
+
+- Next, we further quantitatively compared the pathway activity scores between the control/healthy and end-stage-COPD stage for each cell type separately using t-statstics.
+- In the plots below, an arbitrary red line represents median pathway activity score across the entire data.
+- While, the asterics represents p-value of difference between the group means, calculated using t-statistics.
+
+
+```{r,results='asis',echo=T,message=F,fig.height=6,fig.width=12,warning=F}
+for(i in 1:nrow(mypaths)){
+  cat("\n\n##",mypaths$label[i]," \n")
+  print(myplotfun2(i=i,mypaths,so,plt=1))
+  print(myplotfun2(i=i,mypaths,so,plt=2))
+  print(htmltools::tagList(
+    tags$div(
+      datatable(myplotfun2(i=i,mypaths,so,plt=3),rownames = F,extensions = 'Buttons',
+                options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                               buttons = list(list(extend = 'csv',  filename = paste0(mypaths$pathway[i],"_summary")),list(extend ='excel', filename = paste0(mypaths$pathway[i],"_summary"))), scrollX = TRUE,scrollCollapse = TRUE)) %>%
+        formatSignif(columns = c('p.value'),digits = 2),
+      tags$br(),
+      tags$br(),
+      tags$br(),
+      tags$br()
+    )
+  ))
+  cat("  \n\n")
+}
+
+```
+
+
+# Pathway specificity across cell types {.tabset .tabset-fade}
+
+- Similar to the specificity of gene expression across cell types, we scored the specificity of a pathway across cell types.
+- We used 46 KEGG pathways that we observed as differentially expressed in our bulk expression data in this analysis.
+- Briefly, the pathway activity for each cell was computed as described in earlier section where the aggregated expression of the genes belonging to a pathway was normalized by subtracting similar expression of the randomly selected control genes from the matched expression bins.
+- The pathway activity scores obtained using this method showed a normal unimodal distribution. - As the expression for pathway genes is normalized using expression bins, the expectation is that the aggregated value of the gene expression for pathway is 0. Hence, I use 0 as a threshold to define whether the pathway is active in a cell or not.
+- Using this criteria, the odds ratio were computed for the cells showing the pathway activity versus not in a given cell type and for the remainder of the data.
+- The P-values were calculated using Fisher statistics and corrected using FDR method.
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+pl <- so@meta.data
+gplots <- list()
+for(i in 15:ncol(pl)){
+  thresh = mean(pl[,i])+2*sd(pl[,i])
+  gplots[[names(pl)[i]]] <- pl %>% 
+    ggplot(aes(x=pl[,i]))+geom_density()+
+    geom_vline(xintercept = thresh,col='red')+
+    geom_vline(xintercept = 0,col='green')+
+    xlab("pathway score")+ylab('density')+
+    ggtitle(names(pl)[i],
+            subtitle = paste0('',sum(pl[,i]>thresh),"/",nrow(pl),' cells'))+
+    theme_bw()
+}
+
+```
+
+
+## Pathway score distribution
+- The following plot shows overall pathway activity score distribution for 25 KEGG pathways.
+- The red line indicates mean + 2*sd value.
+- Green line indicates 0 value
+<br>
+  <b>Observations</b><br>
+  - It appears that the threshold schema defined by red may or may not be biologically meaningful for several pathways.
+- For instance, we would expect that ribosomal biogenesis or ribosome pathways are active in most of the cell types. However, the observations are on the contrary.
+- This suggests that a) the members of these pathways are not profiled in the data or b)the schema is over-thresholding for certain pathways.
+- On the other hand, if we use bin-normalized expression, the expectation is that any value more than 0 is expression/activity of the overall pathway.
+
+```{r, fig.height=20,fig.width=12,warning=F,message=F}
+cowplot::plot_grid(plotlist = gplots,ncol = 5,align = 'hv')
+
+```
+
+## Heatmap of enrichment
+- As such, one should interpret the subsequent analyses in the light of other biological insights about the pathway and disease.
+
+```{r, fig.height=12,fig.width=12,warning=F,message=F}
+mycalcfun2 <- function(so){
+  gc()
+  e <- so@meta.data
+  e <- e[,15:ncol(e)]
+  e <- apply(e,2,function(x){
+    #thresh= mean(x)+2*sd(x)
+    thresh= 0# mean(x)+2*sd(x)
+    x <- ifelse(x<thresh,0,1)
+    x
+  })
+  e <- as.data.frame(e)
+  dat <- so@active.ident
+  dat <- data.frame(cell=names(dat),cluster=dat)
+  tsnepl <- so@reductions$umap@cell.embeddings %>% as.data.frame
+  tsnepl$cell <- rownames(tsnepl)
+  tsnepl <- merge(tsnepl,dat,by="cell")
+  e <- e %>% mutate(cell = rownames(e))
+  dat <- merge(dat,e,by="cell",all.x=T)
+  dat$cell <- NULL
+  
+  dat[is.na(dat)] <- 0
+  dat <- as.data.table(dat)
+  ## select expressed proteins in single cells
+  dat <- dat[, lapply(.SD, function(x) sum(x>0) ), by=list(cluster)] %>%as.data.frame 
+  rownames(dat) <- dat$cluster
+  dat$cluster <- NULL
+  dat <- dat %>% t %>% as.data.frame
+  tsnepl <- merge(tsnepl,e,by="cell")
+  
+  y <- unname(table(tsnepl$cluster)[names(dat)]) 
+  pvals <- t(apply(dat,1,function(x){
+    out <- c()
+    for(i in 1:length(x)){
+      xx <- matrix(c( x[i], y[i]-x[i],  sum(x),sum(y)-sum(x)), nrow = 2,byrow = F)
+      out <- c(out, fisher.test(xx,alternative = "greater")$p.val)
+    }
+    out
+  }))
+  
+  pvals <- as.data.frame(pvals)
+  padj <- matrix(p.adjust(unlist(pvals),method = "fdr"),nrow=nrow(pvals),byrow = F) %>% as.data.frame
+  names(padj) <- names(pvals)
+  rownames(padj) <- rownames(pvals)
+  names(padj) <- names(pvals) <- paste0(names(dat))
+  
+  list(pvals=pvals,padj=padj)
+}
+
+pl <- mycalcfun2(so)
+
+```
+
+<b>Note:</b><br>
+- The attached table displays FDR values on -log10 scale. 
+- Furthermore, the -log10FDR values are capped at 100.
+
+
+```{r, fig.height=12,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(pl[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  ht = ComplexHeatmap::Heatmap((m),
+                               #column_order = names(n),
+                               name = 'enrichment\n-log10(FDR)',
+                               row_names_gp = grid::gpar(fontsize = 10),
+                               column_names_gp = grid::gpar(fontsize = 10),
+                               column_title_gp =  grid::gpar(fontsize = 10),
+                               col=circlize::colorRamp2(range(m,na.rm=T),
+                                                        c("#ffffcc", "#800026")))
+  ComplexHeatmap::draw(ht, heatmap_legend_side = "bottom")
+})
+
+```
+
+
+## Table
+
+```{r, fig.height=8,fig.width=12,warning=F,message=F}
+local({
+  m <- -log10(pl[[2]])
+  m <- as.matrix(m)
+  m[is.infinite(m)] <- 100 
+  m <- ifelse(m>100,100,m)
+  m <- round(m,3)
+  m <- as.data.frame(m)
+  m$gene <- rownames(m)
+  m <- m[,c(ncol(m),1:(ncol(m)-1) )]
+  m %>%
+    datatable(rownames = F,extensions = 'Buttons',
+              options = list(searching = TRUE,pageLength = 10,dom = 'Bfrtip', 
+                             buttons = list(list(extend = 'csv',  filename = paste0("pathway enrichment")),list(extend ='excel', filename = paste0("pathway enrichment"))), scrollX = TRUE,scrollCollapse = TRUE))
+  
+  
+  
+})
+
+```
+
+
+# References
+
+- Uku Raudvere, Liis Kolberg, Ivan Kuzmin, Tambet Arak, Priit Adler, Hedi Peterson, Jaak Vilo: g:Profiler: a web server for functional enrichment analysis and conversions of gene lists (2019 update) Nucleic Acids Research 2019; doi:10.1093/nar/gkz369
+- Adams TS, Schupp JC, Poli S, Ayaub EA, Neumark N, Ahangari F, Chu SG, Raby BA, DeIuliis G, Januszyk M, Duan Q, Arnett HA, Siddiqui A, Washko GR, Homer R, Yan X, Rosas IO, Kaminski N. Single-cell RNA-seq reveals ectopic and aberrant lung-resident cell populations in idiopathic pulmonary fibrosis. Sci Adv. 2020 Jul 8;6(28):eaba1983. doi: 10.1126/sciadv.aba1983. PMID: 32832599; PMCID: PMC7439502.
+- Pathview: an R/Bioconductor package for pathway-based data integration and visualization. Bioinformatics, 29(14):1830-1831, 2013. doi: 10.1093/bioinformatics/btt285
+- Luo, Weijun, Friedman, Michael, Shedden, Kerby, Hankenson, Kurt, Woolf, Peter (2009). “GAGE: generally applicable gene set enrichment for pathway analysis.” BMC Bioinformatics, 10, 161.
+- Hao Y, Hao S, Andersen-Nissen E, III WMM, Zheng S, Butler A, Lee MJ, Wilk AJ, Darby C, Zagar M, Hoffman P, Stoeckius M, Papalexi E, Mimitou EP, Jain J, Srivastava A, Stuart T, Fleming LB, Yeung B, Rogers AJ, McElrath JM, Blish CA, Gottardo R, Smibert P, Satija R (2021). “Integrated analysis of multimodal single-cell data.” Cell. doi: 10.1016/j.cell.2021.04.048, https://doi.org/10.1016/j.cell.2021.04.048.
+
+
+
+
+
+
